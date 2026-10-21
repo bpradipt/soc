@@ -1,0 +1,5 @@
+build/
+sw/*.o
+sw/*.d
+sw/*.elf
+sw/*.bin
