@@ -1,0 +1,15 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 1bf0f7e..be7c726 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -67,6 +67,10 @@ pub enum Tee {
+     #[strum(serialize = "tpm")]
+     Tpm,
+ 
++    // LiteX DICE lab chip: a simulated SoC whose boot ROM implements DICE
++    #[strum(serialize = "litexdice")]
++    LitexDice,
++
+     // These values are only used for testing an attestation server, and should not
+     // be used in an actual attestation scenario.
+     #[strum(serialize = "sample")]
