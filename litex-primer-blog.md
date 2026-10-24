@@ -4,7 +4,7 @@
 
 ---
 
-## 1. What LiteX is
+## 1. What is LiteX?
 
 LiteX is a Python framework for building SoCs. You describe the hardware in Python, LiteX generates Verilog, and a backend turns that Verilog into an FPGA bitstream or a simulator. It has several layers:
 
@@ -28,7 +28,7 @@ Around that core sit the ecosystem projects: LiteDRAM, LiteEth, LiteSPI, LiteSDC
 | **A litex-boards target** | `python3 -m litex_boards.targets.digilent_arty --build --load` | running a standard SoC on a real FPGA board |
 | **Your own SoC script** | `rot_soc.py`, `cc_soc.py`, `trustee_soc.py`, `tls_soc.py` | custom hardware, custom boot flow |
 
-The LiteX documentation starts with the first two, and they're the right starting point for most projects. The series uses the third, for three reasons:
+The LiteX documentation primarily focuses on the first two ways. The series uses the third, for three reasons:
 
 - It adds a **custom peripheral**, the Root of Trust block, which no CLI flag provides.
 - It replaces the **LiteX BIOS** with its own boot ROM, because the ROM is the subject of the series.
@@ -45,7 +45,7 @@ litex_sim --cpu-type=vexriscv --help    # every option: Ethernet, SDRAM, tracing
 
 ---
 
-## 3. Migen in five minutes
+## 3. What is Migen?
 
 Hardware is a set of signals and the rules that drive them. Migen expresses both in Python:
 
@@ -73,11 +73,11 @@ The pieces the series uses:
 
 **`LiteXModule` versus Migen's `Module`.** Both describe a block of hardware. `LiteXModule` adds automatic registration: assigning a module to an attribute (`self.rot = RootOfTrust(…)`) adds it as a submodule. It also collects the block's CSRs (`AutoCSR`) and documentation (`AutoDoc`). With plain Migen you'd write `self.submodules.rot = …`. New LiteX code uses `LiteXModule`.
 
-The Migen [manual](https://m-labs.hk/migen/manual/) covers the language in depth.
+For details, refer to the Migen [manual](https://m-labs.hk/migen/manual/).
 
 ---
 
-## 4. CSRs: how software talks to your hardware
+## 4. CSRs: how software talks to the hardware
 
 A **CSR** (Control and Status Register) is a register that the CPU reads or writes at a fixed address. LiteX gives you three kinds:
 
@@ -87,7 +87,7 @@ A **CSR** (Control and Status Register) is a register that the CPU reads or writ
 | `CSRStorage(n)` | reads `.storage`; `.re` pulses for one cycle on each CPU write | writes, reads back | `lock`, `meas_stage` |
 | `CSR(n)` | sees `.r` and `.re` (write strobe), drives `.w` | writes and reads, no storage | `sim_finish` |
 
-Here is the Root of Trust block from the first post, minus its fuses:
+Here is the Root of Trust block that we'll use, minus its fuses:
 
 ```python
 class RootOfTrust(LiteXModule):
@@ -100,7 +100,7 @@ class RootOfTrust(LiteXModule):
         self.comb += self.locked.status.eq(locked)
 ```
 
-Four things happen without any code from you:
+Four things are taken care by LiteX:
 
 1. **Collection.** `LiteXModule` finds every CSR attribute in the block.
 2. **Addressing.** The SoC gives each block a 2 KiB slot (`csr_paging = 0x800`) in the CSR region, and each register its offset inside the slot. Registers wider than 32 bits take several words, most significant word first (`csr_ordering = "big"`).
@@ -139,8 +139,13 @@ _io = [
 platform = SimPlatform("SIM", _io)
 ```
 
-`platform.request("sys_clk")` hands one of these resources to the design. A **CRG** (clock and reset generator) turns the clock pin into the SoC's `sys` clock domain. On an FPGA board the CRG would hold a PLL. The simulator's `CRG` passes the clock through.
+`platform.request("sys_clk")` hands one of these resources to the design.
 
+Every `self.sync` assignment belongs to a **clock domain**, a clock plus its reset. Plain `self.sync` uses the domain named `sys`, whose two signals, `cd_sys.clk` and `cd_sys.rst`, decide when each flip-flop updates and when it returns to its reset value. A **CRG** (clock and reset generator) drives those signals:
+
+- **On an FPGA board**, the CRG turns the board's oscillator into the frequencies the SoC wants, with the FPGA's PLL, and holds the domains in reset until the PLL locks. That's why each litex-boards target has its own `_CRG` class.
+- **In the simulator**, the `clocker` module already toggles the `sys_clk` pad at the configured frequency. The simple `CRG` from `litex.build.io` wires that pad straight to `cd_sys.clk` and adds a power-on reset: `sys` starts in reset and comes out after the first clock edge (§7e).
+    
 ### 5b. `SoCCore`: the standard SoC
 
 `SoCCore` builds a complete SoC from a few arguments. All four labs use the same call, with different sizes:
@@ -163,7 +168,7 @@ soc.rot = RootOfTrust()                          # a custom peripheral: assign i
 
 This gives you the CPU, a Wishbone interconnect, the three memories, a UART, a timer, a control block (`ctrl`) and the CSR bridge. The CPU defines the memory map. For VexRiscv it's ROM at `0x0000_0000`, SRAM at `0x1000_0000`, main RAM at `0x4000_0000` and CSRs at `0xF000_0000`, and the build writes it to `mem.h`.
 
-Other calls the series uses:
+Other calls used in the series:
 
 - **`soc.add_uart(name, uart_name, uart_pads)`** adds another UART. (The simulator's bridges only handle pads named `serial`, though, so the labs stayed with one UART.)
 - **`platform.add_debug(soc)`** adds three simulation helpers as CSRs: `sim_finish` (the firmware stops the simulation), `sim_trace` (turns waveform recording on and off) and `sim_marker`.
@@ -276,14 +281,31 @@ When `Vsim` starts, it opens every `.so` in `modules/` with `dlopen`, and each m
 So `[gmii_ethernet] loaded` means the code is in memory, not that the chip has an Ethernet port. Next, `Vsim` reads `sim_config.js`, which `SimConfig` wrote from your script, and creates a session only for the modules listed there. In the labs that's two:
 
 ```json
-[
-    { "module": "clocker",        "interface": ["sys_clk"],           "args": {"freq_hz": 1000000, "phase_deg": 0}, "tickfirst": true },
-    { "module": "serial2console", "interface": ["serial", "sys_clk"] },
-    { "timebase": 500000 }
-]
+{
+    "module": "clocker",
+    "interface": [
+        "sys_clk"
+    ],
+    "args": {
+        "freq_hz": 1000000,
+        "phase_deg": 0
+    },
+    "tickfirst": true
+},
+{
+    "module": "serial2console",
+    "interface": [
+        "serial",
+        "sys_clk"
+    ]
+},
+{
+    "timebase": 500000
+}
+
 ```
 
-Each `interface` names pads from the platform's `_io` list. `clocker` drives `sys_clk`. `serial2console` connects the UART's `serial` pads to the simulator's stdin and stdout, which is how `printf` in the firmware reaches your terminal, and how the host in posts 2 to 4 talks to the chip. The `[clocker] sys_clk: …` line comes from creating the clocker's session. The `MDEBUG: Save time: -1, load_time: 0` line belongs to the simulator's snapshot feature, which the labs leave off.
+Each `interface` name pads from the platform's `_io` list. `clocker` drives `sys_clk`. `serial2console` connects the UART's `serial` pads to the simulator's stdin and stdout, which is how `printf` in the firmware reaches your terminal, and how the host talks to the chip. The `[clocker] sys_clk: …` line comes from creating the clocker's session.
 
 ### 7d. The run loop
 
@@ -359,7 +381,7 @@ int main(void)
 }
 ```
 
-LiteX's C library is small. The labs found no `snprintf`, `strstr`, `atoi` or `memcmp`, and wrote short helpers instead. `system.h` adds `flush_cpu_icache()`, which a boot ROM must call before it jumps to code it has loaded or measured.
+LiteX's C library is small so you'll have to write some custom helpers as per your requirements. `system.h` adds `flush_cpu_icache()`, which a boot ROM must call before it jumps to code it has loaded or measured.
 
 ### 8c. Getting firmware into the chip
 
