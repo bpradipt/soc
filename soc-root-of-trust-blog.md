@@ -209,7 +209,7 @@ alias lab='podman run --rm -it -v "$PWD":/lab:Z -w /lab soc-rot-lab'
 
 From here on, `lab ./rot_soc.py --tamper` runs `./rot_soc.py --tamper` inside the container. The container is throwaway, but the build output goes to `soc-rot-lab/build/` on your host, so it survives between runs. (Drop `:Z` if your host doesn't use SELinux.) If you installed the tools natively, leave out the `lab` prefix.
 
-Natively, you need Python 3, Verilator 5, `libevent`/`json-c`/`zlib` headers, `meson`/`ninja`, and a bare-metal RISC-V GCC (`riscv64-unknown-elf-` or `riscv-none-elf-`). Then run `litex_setup.py --init --install --tag=2026.08` from a LiteX checkout. I developed the lab natively with LiteX 2026.08, Verilator 5.052 and xPack `riscv-none-elf-gcc` 14.2. I didn't build the Containerfile in that environment, so treat it as a starting point.
+Natively, you need Python 3, Verilator 5, `libevent`/`json-c`/`zlib` headers, `meson`/`ninja`, and a bare-metal RISC-V GCC (`riscv64-unknown-elf-` or `riscv-none-elf-`). Then run `litex_setup.py --init --install --tag=2026.08` from a LiteX checkout. I tested the lab both ways: natively with LiteX 2026.08, Verilator 5.052 and xPack `riscv-none-elf-gcc` 14.2, and in the container, which uses Debian trixie's packages.
 
 The first run takes a few minutes: LiteX compiles its C libraries, then Verilator compiles the whole SoC into a C++ simulator. Switching between the scenarios below doesn't change the hardware design, only memory contents, so later runs skip the Verilator step and start in seconds. `--trace` and edits to the Python hardware description cause one more full compile.
 
