@@ -1,0 +1,165 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index 86d89b5..0f2567a 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -4415,8 +4415,6 @@ dependencies = [
+ [[package]]
+ name = "kbs-types"
+ version = "0.18.0"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "4453d70e4a9a7db181a83661803dc296471957d16cb4ddd2af7a52d17eb234cc"
+ dependencies = [
+  "base64 0.22.1",
+  "ear",
+@@ -8535,6 +8533,7 @@ dependencies = [
+  "codicon",
+  "csv-rs",
+  "ear",
++ "ed25519-compact",
+  "eventlog",
+  "hex",
+  "http-cache-reqwest",
+diff --git a/Cargo.toml b/Cargo.toml
+index 0e336e0..dd5ffe9 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -79,4 +79,5 @@ uuid = { version = "1.23.3", features = ["v4", "v5"] }
+ zeroize = "1"
+ 
+ [patch.crates-io]
++kbs-types = { path = "../kbs-types" }
+ sev = { git = "https://github.com/virtee/sev", rev = "d487809188c3c92e397bc92e2cb2a85eb982c980" }
+diff --git a/attestation-service/Cargo.toml b/attestation-service/Cargo.toml
+index d94c5cc..ee96567 100644
+--- a/attestation-service/Cargo.toml
++++ b/attestation-service/Cargo.toml
+@@ -17,6 +17,7 @@ cca-verifier = ["verifier/cca-verifier"]
+ se-verifier = ["verifier/se-verifier"]
+ nvidia-verifier = ["verifier/nvidia-verifier"]
+ tpm-verifier = ["verifier/tpm-verifier"]
++litexdice-verifier = ["verifier/litexdice-verifier"]
+ 
+ rvps-grpc = ["prost", "tonic", "mobc"]
+ 
+diff --git a/attestation-service/src/bin/grpc/mod.rs b/attestation-service/src/bin/grpc/mod.rs
+index a07c5e6..d1471bd 100644
+--- a/attestation-service/src/bin/grpc/mod.rs
++++ b/attestation-service/src/bin/grpc/mod.rs
+@@ -47,6 +47,7 @@ fn to_kbs_tee(tee: &str) -> anyhow::Result<Tee> {
+         "tdx" => Tee::Tdx,
+         "csv" => Tee::Csv,
+         "sample" => Tee::Sample,
++        "litexdice" => Tee::LitexDice,
+         "az-snp-vtpm" => Tee::AzSnpVtpm,
+         "cca" => Tee::Cca,
+         "az-tdx-vtpm" => Tee::AzTdxVtpm,
+diff --git a/attestation-service/src/bin/restful/mod.rs b/attestation-service/src/bin/restful/mod.rs
+index 1d95dc0..4fbd9ed 100644
+--- a/attestation-service/src/bin/restful/mod.rs
++++ b/attestation-service/src/bin/restful/mod.rs
+@@ -89,6 +89,7 @@ fn to_tee(tee: &str) -> anyhow::Result<Tee> {
+         "cca" => Tee::Cca,
+         "csv" => Tee::Csv,
+         "sample" => Tee::Sample,
++        "litexdice" => Tee::LitexDice,
+         "sampledevice" => Tee::SampleDevice,
+         "az-tdx-vtpm" => Tee::AzTdxVtpm,
+         "se" => Tee::Se,
+diff --git a/attestation-service/src/ear_token/ear_default_policy_cpu.rego b/attestation-service/src/ear_token/ear_default_policy_cpu.rego
+index de8736a..420c016 100644
+--- a/attestation-service/src/ear_token/ear_default_policy_cpu.rego
++++ b/attestation-service/src/ear_token/ear_default_policy_cpu.rego
+@@ -98,6 +98,34 @@ configuration := 2 if {
+ 	input.sample.debug == false
+ }
+ 
++##### LiteX DICE
++
++# The litexdice verifier has already checked the cryptography: the Alias certificate chains to
++# the DeviceID key, and the Alias key signed this session's REPORT_DATA. These rules decide
++# whether to trust what the evidence claims.
++
++# For the `executables` trust claim, the value 3 stands for "Only a recognized genuine set of
++# approved executables have been loaded during the boot process." The ROM certified this
++# measurement of the firmware; accept it only if the firmware vendor published it.
++executables := 3 if {
++	input.litexdice
++	input.litexdice.measurement in query_reference_value("litexdice_firmware_measurement")
++}
++
++# For the `hardware` trust claim, the value 2 stands for "An Attester has passed its hardware
++# and/or firmware verifications needed to demonstrate that these are genuine/supported."
++# Accept the DeviceID key only if the chip manufacturer endorsed it.
++hardware := 2 if {
++	input.litexdice
++	input.litexdice.device_id in query_reference_value("litexdice_device_id")
++}
++
++# For the `configuration` trust claim, the value 2 stands for "The configuration is a known and
++# approved config." The lab chip has no debug mode or other boot configuration.
++configuration := 2 if {
++	input.litexdice
++}
++
+ ##### SNP
+ executables := 3 if {
+ 	input.snp
+diff --git a/deps/verifier/Cargo.toml b/deps/verifier/Cargo.toml
+index 62ddedc..cb1e9be 100644
+--- a/deps/verifier/Cargo.toml
++++ b/deps/verifier/Cargo.toml
+@@ -17,6 +17,7 @@ all-verifier = [
+     "se-verifier",
+     "nvidia-verifier",
+     "tpm-verifier",
++    "litexdice-verifier",
+ ]
+ tdx-verifier = [
+     "eventlog",
+@@ -57,6 +58,7 @@ cca-verifier = ["ear", "jsonwebtoken", "veraison-apiclient", "ccatoken"]
+ se-verifier = ["openssl", "pv", "serde_with", "tokio/sync"]
+ nvidia-verifier = ["jsonwebtoken", "asn1-rs", "openssl", "x509-parser"]
+ tpm-verifier = ["az-cvm-vtpm", "openssl", "tss-esapi"]
++litexdice-verifier = ["ed25519-compact"]
+ nvidia-dpu-verifier = ["p384", "serde_with", "x509-parser"]
+ 
+ [dependencies]
+@@ -125,6 +127,7 @@ url = "2.5.7"
+ bitflags = { version = "2.13.0", features = ["serde"] }
+ time.workspace = true
+ tss-esapi = { version = "7.5", optional = true }
++ed25519-compact = { version = "2.3", optional = true }
+ 
+ [build-dependencies]
+ 
+diff --git a/deps/verifier/src/lib.rs b/deps/verifier/src/lib.rs
+index 1b30d50..7b81ca2 100644
+--- a/deps/verifier/src/lib.rs
++++ b/deps/verifier/src/lib.rs
+@@ -47,6 +47,9 @@ pub(crate) mod intel_dcap;
+ #[cfg(feature = "tpm-verifier")]
+ pub mod tpm;
+ 
++#[cfg(feature = "litexdice-verifier")]
++pub mod litexdice;
++
+ #[cfg(feature = "nvidia-dpu-verifier")]
+ pub mod nvidia_dpu;
+ 
+@@ -189,6 +192,16 @@ pub async fn to_verifier(
+             }
+         }
+ 
++        Tee::LitexDice => {
++            cfg_if::cfg_if! {
++                if #[cfg(feature = "litexdice-verifier")] {
++                    Ok(Box::<litexdice::LitexDice>::default() as Box<dyn Verifier + Send + Sync>)
++                } else {
++                    bail!("feature `litexdice-verifier` is not enabled for `verifier` crate.")
++                }
++            }
++        }
++
+         Tee::Tpm => {
+             cfg_if::cfg_if! {
+                 if #[cfg(feature = "tpm-verifier")] {

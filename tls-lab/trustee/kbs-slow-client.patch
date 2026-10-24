@@ -1,0 +1,17 @@
+diff --git a/kbs/src/api_server.rs b/kbs/src/api_server.rs
+index 231e2a0..235270c 100644
+--- a/kbs/src/api_server.rs
++++ b/kbs/src/api_server.rs
+@@ -192,6 +192,12 @@ impl ApiServer {
+             http_server = http_server.workers(worker_count);
+         }
+ 
++        // Lab only: the simulated chip runs at 1 MHz and needs about a minute for a TLS handshake.
++        http_server = http_server
++            .tls_handshake_timeout(std::time::Duration::from_secs(600))
++            .client_request_timeout(std::time::Duration::from_secs(600))
++            .keep_alive(std::time::Duration::from_secs(600));
++
+         if !http_config.insecure_http {
+             let tls_server = http_server
+                 .bind_openssl(

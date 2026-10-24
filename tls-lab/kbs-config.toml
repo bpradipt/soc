@@ -1,0 +1,29 @@
+# Trustee KBS for the lab: one process with the Attestation Service and RVPS built in, serving HTTPS.
+# Local and throwaway. Don't reuse these settings outside the lab.
+
+[http_server]
+sockets = ["127.0.0.1:8080"]
+private_key = "build/kbs-tls/key.pem"  # TLS identity created by tls_soc.py; its public key is pinned in the firmware
+certificate = "build/kbs-tls/cert.pem"
+
+[attestation_token]
+insecure_header_jwk = true            # lab only: trust the token key the built-in AS generates at start-up
+
+[attestation_service]
+type = "coco_as_builtin"
+
+[attestation_service.rvps_config]
+type = "BuiltIn"
+
+[admin]
+authorization_mode = "InsecureAllowAll"   # lab only: the setup script calls the admin API without a token
+
+[[plugins]]
+name = "resource"
+storage_backend_type = "kvstorage"
+
+[storage_backend]
+storage_type = "LocalFs"
+
+[storage_backend.backends.local_fs]
+dir_path = "build/kbs"

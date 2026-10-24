@@ -1,0 +1,26 @@
+# podman build -t tls-lab .
+# podman run --rm -it -v $PWD:/lab:Z -w /lab tls-lab ./tls_soc.py
+FROM debian:trixie
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential git ca-certificates curl python3 python3-venv \
+        verilator libevent-dev libjson-c-dev zlib1g-dev \
+        gcc-riscv64-unknown-elf meson ninja-build \
+        protobuf-compiler libssl-dev pkg-config clang libclang-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV VIRTUAL_ENV=/opt/venv PATH=/opt/venv/bin:$PATH
+RUN python3 -m venv /opt/venv && pip install --no-cache-dir cryptography
+
+WORKDIR /opt/litex
+RUN git clone --depth 1 -b 2026.08 https://github.com/enjoy-digital/litex && \
+    python3 litex/litex_setup.py --init --install --config=standard --tag=2026.08
+
+# Rust for Trustee, which pins its toolchain in rust-toolchain.toml.
+ENV CARGO_HOME=/opt/cargo RUSTUP_HOME=/opt/rustup PATH=/opt/cargo/bin:$PATH
+RUN curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.95.0
+
+# Trustee v0.22.0 with the litexdice TEE type and lab timeouts, built once into the image.
+COPY trustee /opt/trustee-lab/trustee
+RUN TRUSTEE_SRC=/opt/trustee-src /opt/trustee-lab/trustee/setup.sh
+ENV KBS_BIN=/opt/trustee-src/kbs
