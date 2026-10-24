@@ -207,7 +207,7 @@ build/
 | Argument | Effect |
 |---|---|
 | `Builder(..., compile_gateware=False)` | only generate headers and build the software libraries; no Verilog compile |
-| `build(run=False)` | generate everything but don't start the simulator (see the gotcha in §8) |
+| `build(run=False)` | generate everything but don't start the simulator (see the gotcha in §9) |
 | `build(trace=True)` | build the simulator with waveform support (VCD, or FST with `trace_fst=True`) |
 | `build(interactive=False)` | don't put your terminal in raw mode |
 
@@ -223,9 +223,96 @@ The second pass doesn't change the hardware, so the addresses from pass 1 stay v
 
 ---
 
-## 7. Your own firmware
+## 7. What a run prints, from `INFO:SoC` to the reset vector
 
-### 7a. The build
+A lab run prints three kinds of lines before the boot ROM says anything. They come from three different programs, at three different times.
+
+| Stage | Printed by | Example | What happens |
+|---|---|---|---|
+| 1. Elaborate | Python (`SoCCore`, `Builder`) | `INFO:SoC:CPU vexriscv setting reset address to 0x00000000.` | LiteX assembles the SoC and writes `sim.v`, the `.init` files and the headers |
+| 2. Compile | `make`, Verilator, the C compiler | `verilator -Wno-fatal -O3 --cc …` (or `[build] RTL unchanged…`) | `sim.v` becomes `obj_dir/Vsim`; each simulation module becomes a `.so` |
+| 3. Start the simulator | `Vsim` and its modules | `[gmii_ethernet] loaded`, `[clocker] sys_clk: freq_hz=1000000` | modules load, `sim_config.js` picks the ones to attach |
+| 4. Power on | the simulated chip | `[rom] reset vector reached` | memories fill from `.init` files, reset releases, the CPU fetches from `0x0` |
+
+### 7a. `INFO:SoC`: Python builds the SoC
+
+The `INFO:SoC…` lines are a transcript of `SoCCore` assembling the chip. Reading them is the quickest way to check what you built:
+
+```
+INFO:SoCCSRHandler:32-bit CSR Bus, 32-bit Aligned, 16.0KiB Address Space, 2048B Paging, big Ordering (Up to 32 Locations).
+INFO:SoC:CPU vexriscv overriding sram mapping from 0x01000000 to 0x10000000.
+INFO:SoC:CPU vexriscv setting reset address to 0x00000000.
+INFO:SoC:RAM rom added Origin: 0x00000000, Size: 0x00010000, Mode:  RX, Cached:  True, Linker: False.
+INFO:SoC:RAM main_ram added Origin: 0x40000000, Size: 0x00010000, Mode: RWX, Cached:  True, Linker: False.
+INFO:SoCCSRHandler:rot CSR allocated at Location 1.
+INFO:SoCCSRHandler:uart CSR allocated at Location 6.
+```
+
+Each line matches a concept from earlier in this primer. The CSR handler sets the 2 KiB slots and the word order from §4. VexRiscv moves SRAM to its own address and sets its reset address to the ROM, as §5b says. `rot CSR allocated at Location 1` means the Root of Trust gets slot 1, so its registers start at `0xF000_0000 + 1 × 0x800 = 0xF000_0800`. The run prints these lines twice, once for each pass of the two-pass build.
+
+### 7b. Compiling: one simulator, many modules
+
+`Vsim` has two parts:
+
+- **The chip.** Verilator translates `sim.v` and the CPU's Verilog (`VexRiscv.v`) into C++ and compiles them. Everything inside the SoC lives here.
+- **The simulator core.** A small C program from `litex/build/sim/core/` (`sim.c`, `veril.cpp`, `pads.c`) runs the clock loop and connects the chip's pads to plug-in modules.
+
+The modules are the outside world: a clock source, a console, Ethernet, an I2C EEPROM, a JTAG port, a QEMU bridge. Each is a directory in `litex/build/sim/core/modules/`, and the build compiles *all* of them into `build/gateware/modules/*.so`, whether your SoC uses them or not.
+
+### 7c. `[module] loaded`: the simulator starts
+
+When `Vsim` starts, it opens every `.so` in `modules/` with `dlopen`, and each module prints that it loaded:
+
+```
+[gmii_ethernet] loaded (0x55841fa7c2f0)
+[qemu_axi] loaded (0x55841fa7c2f0)
+[serial2console] loaded (0x55841fa7c2f0)
+[spdeeprom] loaded (addr = 0x0)
+[clocker] loaded
+...
+[clocker] sys_clk: freq_hz=1000000, phase_deg=0
+```
+
+So `[gmii_ethernet] loaded` means the code is in memory, not that the chip has an Ethernet port. Next, `Vsim` reads `sim_config.js`, which `SimConfig` wrote from your script, and creates a session only for the modules listed there. In the labs that's two:
+
+```json
+[
+    { "module": "clocker",        "interface": ["sys_clk"],           "args": {"freq_hz": 1000000, "phase_deg": 0}, "tickfirst": true },
+    { "module": "serial2console", "interface": ["serial", "sys_clk"] },
+    { "timebase": 500000 }
+]
+```
+
+Each `interface` names pads from the platform's `_io` list. `clocker` drives `sys_clk`. `serial2console` connects the UART's `serial` pads to the simulator's stdin and stdout, which is how `printf` in the firmware reaches your terminal, and how the host in posts 2 to 4 talks to the chip. The `[clocker] sys_clk: …` line comes from creating the clocker's session. The `MDEBUG: Save time: -1, load_time: 0` line belongs to the simulator's snapshot feature, which the labs leave off.
+
+### 7d. The run loop
+
+The simulator advances time in steps of `timebase`, 500,000 ps here, which is half a period of the 1 MHz clock:
+
+```mermaid
+flowchart LR
+    A["clocker tick<br/>toggle sys_clk"] --> B["eval()<br/>the whole chip<br/>reacts to the clock"]
+    B --> C["other module ticks<br/>serial2console moves<br/>UART bytes"]
+    C --> D["time += 0.5 µs"]
+    D --> A
+```
+
+`eval()` is the Verilated chip. On a rising clock edge, every `self.sync` assignment in every block takes effect, and every `self.comb` assignment settles. The loop stops when the firmware writes `sim_finish`. That write prints the closing `[sim] sys_clk=1.000MHz, simulated=…, elapsed=…` line, which shows how fast the simulation ran compared with real time.
+
+### 7e. Power-on: from reset to `[rom] reset vector reached`
+
+Nothing loads software into the chip at run time. The memories are full before the first clock edge:
+
+1. **Memory contents.** `sim.v` declares each memory with an `initial` block that calls `$readmemh("sim_rom.init", rom)`, and the same for `sim_main_ram.init`, `sim_sram.init` and `sim_otp.init`. Verilator runs those blocks when the model starts, so the boot ROM, the firmware and the fuses are in place at time zero.
+2. **Reset.** The CRG holds the `sys` clock domain in reset at power-on and releases it after the first clock edge.
+3. **The first fetch.** VexRiscv leaves reset at its reset address, `0x0000_0000` (the `setting reset address` line from §7a). That address belongs to the ROM, so the first instruction it runs is the boot ROM's `crt0`, which sets up the stack and calls `main()`.
+4. **The first output.** `main()` calls `uart_init()` and `printf()`. Each byte goes through the UART's registers to its pads, `serial2console` picks it up on the next tick, and `[rom] reset vector reached` appears on your terminal.
+
+---
+
+## 8. Your own firmware
+
+### 8a. The build
 
 LiteX's generated `variables.mak` and its `common.mak` give your firmware's Makefile the compiler, flags, include paths and library list for the SoC you built:
 
@@ -254,7 +341,7 @@ firmware.elf: crt0.o firmware.o
 
 The two linker scripts come with LiteX. The BIOS one suits code that runs from ROM. The demo one suits an application in main RAM. `crt0.S` sets up the stack, copies initialized data, clears `.bss` and calls `main()`.
 
-### 7b. The code
+### 8b. The code
 
 ```c
 #include <generated/csr.h>     /* register addresses and accessors */
@@ -274,7 +361,7 @@ int main(void)
 
 LiteX's C library is small. The labs found no `snprintf`, `strstr`, `atoi` or `memcmp`, and wrote short helpers instead. `system.h` adds `flush_cpu_icache()`, which a boot ROM must call before it jumps to code it has loaded or measured.
 
-### 7c. Getting firmware into the chip
+### 8c. Getting firmware into the chip
 
 | Way | How | Used by |
 |---|---|---|
@@ -287,7 +374,7 @@ For a starting point, `litex_bare_metal_demo --build-path=build/<target>` create
 
 ---
 
-## 8. Gotchas the series ran into
+## 9. Gotchas the series ran into
 
 | Symptom | Cause | Fix used in the labs |
 |---|---|---|
@@ -303,7 +390,7 @@ For a starting point, `litex_bare_metal_demo --build-path=build/<target>` create
 
 ---
 
-## 9. Where this primer fits in the series
+## 10. Where this primer fits in the series
 
 | Post | LiteX features it adds |
 |---|---|
@@ -314,7 +401,7 @@ For a starting point, `litex_bare_metal_demo --build-path=build/<target>` create
 
 ---
 
-## 10. References
+## 11. References
 
 **LiteX**
 - [LiteX repository](https://github.com/enjoy-digital/litex) and [wiki home](https://github.com/enjoy-digital/litex/wiki/Home)
