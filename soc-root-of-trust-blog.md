@@ -99,7 +99,7 @@ You've probably met these already: UEFI Secure Boot verifies; the TPM PCRs and t
 
 ## 4. Our example lab SoC
 
-The lab chip is a [LiteX](https://github.com/enjoy-digital/litex) SoC. LiteX is a Python framework for describing SoCs. It generates Verilog, which you can put on an FPGA or, as here, simulate cycle-accurately with Verilator. Ours include the following components:
+The lab chip is a [LiteX](https://github.com/enjoy-digital/litex) SoC. LiteX is a Python framework for describing SoCs. It generates Verilog, which you can put on an FPGA or, as here, simulate cycle-accurately with Verilator. New to LiteX? The [LiteX primer](litex-primer-blog.md) explains every LiteX feature the series uses. Ours include the following components:
 
 - a **VexRiscv** 32-bit RISC-V CPU, reset vector = `0x0` (the ROM)
 - 32 KiB **boot ROM** containing our boot code (`sw/bootrom.c`)
