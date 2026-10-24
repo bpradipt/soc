@@ -1,8 +1,6 @@
 #!/bin/sh
 # Fetch Trustee and kbs-types at pinned releases, add the "litexdice" TEE type, build the KBS.
-#
-#   trustee/setup.sh         KBS with only the litexdice verifier: needs no TDX, SGX or TPM libraries
-#   trustee/setup.sh --all   KBS with every verifier, as Trustee ships it (needs Intel DCAP and tpm2-tss)
+# The KBS gets only the litexdice verifier, so the build needs no TDX, SGX or TPM libraries.
 #
 # The result is build/trustee-src/kbs (or $TRUSTEE_SRC/kbs), which trustee_soc.py starts.
 set -eu
@@ -21,9 +19,7 @@ if [ ! -d trustee/deps/verifier/src/litexdice ]; then
     git -C kbs-types apply "$HERE/kbs-types.patch"         # 1. the new Tee::LitexDice variant
     git -C trustee apply "$HERE/trustee.patch"             # 2. dispatch, features, default policy
     cp -r "$HERE/litexdice" trustee/deps/verifier/src/     # 3. the verifier itself
-    if [ "${1:-}" != --all ]; then
-        git -C trustee apply "$HERE/kbs-litexdice-only.patch"
-    fi
+    git -C trustee apply "$HERE/kbs-litexdice-only.patch"  # 4. build KBS with only this verifier
 fi
 
 cd trustee

@@ -183,13 +183,42 @@ The first version of the lab left out `additional-evidence` and got `REPORT_DATA
 
 The GCM tag check at the end proves that Trustee encrypted this secret to this firmware's key.
 
-In a real confidential VM, the Attestation Agent from [guest-components](https://github.com/confidential-containers/guest-components/tree/main/attestation-agent) runs inside the TEE and does all of this. The lab chip runs bare-metal firmware, so the protocol splits: the host's `kbs_host.py` handles HTTP, and the firmware handles every step that needs a key.
+---
+
+## 4. Writing your own attestation agent
+
+In a confidential VM, the Attestation Agent (AA) from [guest-components](https://github.com/confidential-containers/guest-components/tree/main/attestation-agent) runs inside the TEE and talks to Trustee. It has two parts:
+
+- an **attester** per TEE type (`snp`, `tdx`, `cca` and others), which turns REPORT_DATA into signed evidence from the hardware
+- the **KBS protocol client** (`kbs_protocol`), which runs RCAR over HTTP, creates the TEE key, computes REPORT_DATA, posts the evidence, keeps the token and decrypts the secrets
+
+Trustee doesn't require guest-components. Any client that speaks the KBS protocol works, and the lab is one. The lab chip runs bare-metal firmware with a UART and no network stack, so its "AA" splits in two. The firmware keeps every step that touches a key, and the untrusted host carries the bytes:
+
+| AA responsibility | Lab | Why there |
+|---|---|---|
+| HTTP, cookies and JSON for `/auth`, `/attest`, `/resource` | `kbs_host.py`, on the host | transport only, nothing secret |
+| create the TEE key pair | `firmware.c` | the private key must stay in the TEE |
+| compute REPORT_DATA from the nonce and the TEE key | `firmware.c` | a host that supplied the hash could swap in its own key |
+| produce evidence (the attester's job) | `firmware.c` and `bootrom.c` | the Alias key signs; the ROM's DICE chain vouches for it |
+| decrypt the JWE | `firmware.c` | only the TEE may see the secret |
+
+Use the same rule if you build a client for another environment, such as an enclave, a microcontroller, or a language guest-components doesn't cover. Put the key-dependent rows inside the TEE. Put the rest wherever it's convenient.
+
+A custom client has to get these details right. They hold for Trustee v0.22.0, which speaks KBS protocol version 0.4.0:
+
+1. **Request.** `POST /kbs/v0/auth` with `{"version": "0.4.0", "tee": "<type>", "extra-params": {}}`. KBS checks the version for an exact match. The response carries the `nonce` and sets a `kbs-session-id` cookie that the next two calls must send.
+2. **TEE key.** A JWK in `tee-pubkey`. KBS accepts RSA (`RSA-OAEP-256` or `RSA1_5`) and EC P-256 or P-521 (`ECDH-ES+A256KW`). EC keys look like `{"kty":"EC","crv":"P-256","alg":"ECDH-ES+A256KW","x":…,"y":…}` with base64url coordinates.
+3. **REPORT_DATA.** SHA-384 of the RFC 8785 canonical JSON of `{"additional-evidence": …, "nonce": …, "tee-pubkey": …}`. IBM Secure Execution uses SHA-512. Don't leave out `additional-evidence`: send `""` if you have no secondary devices. The TEE's hardware or root of trust must sign this value inside the evidence.
+4. **Attestation.** `POST /kbs/v0/attest` with `{"runtime-data": {"nonce": …, "tee-pubkey": …}, "tee-evidence": {"primary_evidence": <evidence JSON>, "additional_evidence": ""}}`. The outer keys use kebab-case and the inner ones snake_case. The response is `{"token": …}`, an EAR token whose payload shows the appraisal.
+5. **Response.** `GET /kbs/v0/resource/<repository>/<type>/<tag>` with the session cookie, or with the token as a bearer token. The body is a flattened JWE. For an EC key, decrypt it as §3 describes: ECDH with the `epk` in the protected header, Concat KDF with SHA-256 (AlgorithmID `ECDH-ES+A256KW`, empty PartyU and PartyV info, 256 bits), AES key unwrap, then AES-256-GCM with the protected header's base64url text as the AAD.
+
+The `primary_evidence` JSON is the only TEE-specific part. For an existing TEE type, your client must produce that type's evidence format, and Trustee's verifier for it does the rest. For a new type, you write the verifier as well, as §2 did.
 
 ---
 
-## 4. Hands-on: the lab
+## 5. Hands-on: the lab
 
-### 4a. What's in it
+### 5a. What's in it
 
 [`trustee-lab/`](trustee-lab/) is a copy of the second post's lab with the Trustee pieces added:
 
@@ -213,7 +242,7 @@ trustee-lab/
 
 The SoC is the second post's chip with more RAM: the firmware partition grows from 32 KiB to 64 KiB to fit BearSSL.
 
-`setup.sh` builds KBS with only the `litexdice` verifier by default, via `kbs-litexdice-only.patch`. Trustee's x86 build otherwise compiles every verifier, and the TDX, SGX and TPM ones link Intel's DCAP and tpm2-tss libraries. `setup.sh --all` keeps them all. That's the configuration Trustee's own `kbs/docker/Dockerfile` builds, with `litexdice` included through `all-verifier`.
+`setup.sh` builds KBS with only the `litexdice` verifier, through `kbs-litexdice-only.patch`. A stock Trustee build on x86 compiles every verifier, and the TDX, SGX and TPM ones link Intel's DCAP and tpm2-tss libraries, which a learning lab doesn't need.
 
 `kbs-config.toml` turns on three lab-only settings, each marked in the file:
 
@@ -223,7 +252,7 @@ The SoC is the second post's chip with more RAM: the firmware partition grows fr
 
 A deployment would use TLS, an admin identity provider and a configured token signer.
 
-### 4b. Setup
+### 5b. Setup
 
 ```bash
 cd trustee-lab
@@ -235,7 +264,7 @@ The image build compiles LiteX's toolchain and Trustee's KBS, which takes a whil
 
 Your keys, nonces and measurements will differ from the ones below.
 
-### 4c. Run 1: official firmware
+### 5c. Run 1: official firmware
 
 ```bash
 lab ./trustee_soc.py
@@ -261,7 +290,7 @@ lab ./trustee_soc.py
 
 The appraisal line comes from the EAR token that KBS returned. `cpu0` is the chip's single appraised part, and its three trust-vector values are the ones the `litexdice` rules set. The host forwards the JWE without being able to read it. The firmware decrypts it.
 
-### 4d. Run 2: modified firmware
+### 5d. Run 2: modified firmware
 
 ```bash
 lab ./trustee_soc.py --tamper
@@ -280,7 +309,7 @@ lab ./trustee_soc.py --tamper
 
 KBS *accepts* this evidence. The certificate chain is genuine, and the evil firmware signed this session's nonce with its own certified Alias key. The verifier has nothing to reject. The policy finds a measurement that isn't in the RVPS, so `executables` stays at 33 and the status drops to `warning`. The resource policy then refuses the secret. In this run the verifier/policy split from §1 decides the outcome: the evidence is genuine, and the policy doesn't trust the firmware it describes.
 
-### 4e. Run 3: a hostile host replays an official certificate
+### 5e. Run 3: a hostile host replays an official certificate
 
 ```bash
 lab ./trustee_soc.py --tamper --replay
@@ -306,9 +335,9 @@ The certificate vouches for the official firmware's Alias key, but the evil firm
 
 ---
 
-## 5. What this lab leaves out
+## 6. What this lab leaves out
 
-- **The Attestation Agent.** Confidential VMs run the Attestation Agent inside the TEE, with an attester per platform. An attester for the lab chip would produce the same `EVIDENCE` JSON. The bare-metal firmware can't run the Rust agent, so the lab splits the work between the host and the chip.
+- **guest-components.** A `litexdice` attester in guest-components would let a Linux guest on the chip use the real Attestation Agent. It would produce the same `EVIDENCE` JSON. The lab's bare-metal firmware can't run the agent, so it uses the split from §4.
 - **Real endorsements.** The lab passes the manufacturer's DeviceID list through the RVPS. A verifier for real silicon checks the vendor's certificate chain itself, as Trustee's SNP verifier does with AMD's.
 - **Upstreaming.** A real new TEE type needs a `kbs-types` release, a Trustee pull request with tests and documentation, and usually an attester in guest-components.
 - **Production settings.** TLS, admin authentication, a configured token signer and persistent storage replace the lab-only settings in `kbs-config.toml`.
@@ -316,12 +345,11 @@ The certificate vouches for the official firmware's Alias key, but the evil firm
 
 ---
 
-## 6. Exercises
+## 7. Exercises
 
 1. **Add a firmware version claim.** Put a version number in the Alias certificate, return it as a claim, and add a policy rule that refuses versions below a minimum. Where should the minimum live, in the policy or in the RVPS?
 2. **Remove a check and watch it fail.** Delete the REPORT_DATA comparison from the verifier, rebuild with `trustee/setup.sh`, and run `--tamper --replay` again. Which check still catches the replay? Then delete the signature check as well.
 3. **Write a per-tenant policy.** Upload an attestation policy with your own `policy_id` through `POST /kbs/v0/attestation-policy`, and make the tenant's request select it through `extra-params`.
-4. **Build Trustee's full image.** Run `trustee/setup.sh --all` in an environment with Intel DCAP and tpm2-tss, or build `kbs/docker/Dockerfile` from the patched tree, and confirm that `litexdice` sits next to every other verifier.
 
 ---
 
