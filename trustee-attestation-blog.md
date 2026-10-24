@@ -337,6 +337,7 @@ The certificate vouches for the official firmware's Alias key, but the evil firm
 
 ## 6. What this lab leaves out
 
+- **Authenticating Trustee.** The chip never checks who sent the JWE, and anyone can encrypt to its public TEE key. `./trustee_soc.py --impersonate` shows a hostile host playing KBS and handing the chip a key of its own choosing. [Taking the Host Out of the Protocol](tls-attestation-blog.md) fixes this with TLS from the chip to a pinned Trustee key.
 - **guest-components.** A `litexdice` attester in guest-components would let a Linux guest on the chip use the real Attestation Agent. It would produce the same `EVIDENCE` JSON. The lab's bare-metal firmware can't run the agent, so it uses the split from §4.
 - **Real endorsements.** The lab passes the manufacturer's DeviceID list through the RVPS. A verifier for real silicon checks the vendor's certificate chain itself, as Trustee's SNP verifier does with AMD's.
 - **Upstreaming.** A real new TEE type needs a `kbs-types` release, a Trustee pull request with tests and documentation, and usually an attester in guest-components.

@@ -7,6 +7,9 @@
 #   ./trustee_soc.py --tamper --replay
 #                               modified firmware, and the host swaps in the certificate from an official
 #                               boot -> the litexdice verifier rejects the evidence
+#   ./trustee_soc.py --impersonate
+#                               the host plays KBS and sends its own key -> the chip accepts it, because
+#                               nothing here authenticates Trustee (the tls-lab fixes this)
 #
 # Roles played by this script:
 #   fab        burns a unique device secret (UDS) into the chip's OTP, publishes the chip's DeviceID key
@@ -14,7 +17,8 @@
 #   tenant     loads those two values and the secret into Trustee (kbs_host.provision)
 #   attacker   optionally patches the firmware in RAM before boot (--tamper)
 #   host       runs the simulator and relays the KBS protocol (kbs_host.attest);
-#              with --replay it rewrites the evidence on the way
+#              with --replay it rewrites the evidence on the way;
+#              with --impersonate it skips Trustee and plays KBS itself
 #
 # Trustee runs next to it: trustee/setup.sh builds the KBS into build/trustee-src/kbs (or set KBS_BIN).
 
@@ -151,6 +155,8 @@ def main():
     p.add_argument("--tamper", action="store_true", help="Patch the firmware in RAM before boot.")
     p.add_argument("--replay", action="store_true", help="Hostile host: replace the chip's certificate with "
                                                          "one recorded from an official boot.")
+    p.add_argument("--impersonate", action="store_true", help="Hostile host: skip Trustee and send the chip "
+                                                              "a secret the host chose.")
     args = p.parse_args()
     if args.replay and not os.path.exists("build/official_cert.txt"):
         p.error("--replay replays a recording: run ./trustee_soc.py once without --tamper first")
@@ -219,7 +225,10 @@ def main():
             kbs_host.log("swapped in the Alias certificate recorded from an official boot")
     try:
         lines = protocol_lines()
-        kbs_host.attest(trustee, lines, send, tamper_evidence)
+        if args.impersonate:
+            kbs_host.impersonate(lines, send)
+        else:
+            kbs_host.attest(trustee, lines, send, tamper_evidence)
         for _ in lines:   # print the rest of the chip's log until it powers off
             pass
         chip.wait()
