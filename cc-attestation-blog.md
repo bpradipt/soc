@@ -19,7 +19,7 @@ This post builds that key, the statement and the verifier. Along the way it expl
 
 ---
 
-## 2. Confidential computing in one picture
+## 2. A quick primer on Confidential computing
 
 In a normal cloud server, you trust the people who run it. Their hypervisor can read your VM's memory, and their administrators can dump it. Confidential computing removes that trust: **the host OS, the hypervisor and the cloud operator become the attacker.** The tenant trusts the CPU's hardware and a small amount of firmware, and nothing else on the machine.
 
@@ -40,7 +40,9 @@ Green blocks belong to the tenant's trusted computing base, blue marks the workl
 - **Every memory access passes the access check and the encryption engine.** The hypervisor still schedules the VM and manages its memory, but it can't read or rewrite the VM's pages. If it reads them through DRAM or DMA, it sees ciphertext.
 - **The security processor holds the root of everything.** It boots first, from its own ROM, with its own fuses. It installs the per-VM keys, and it signs the attestation report. In AMD's design it is the AMD Secure Processor, a separate Arm core on the CPU die. Arm's CCA reference designs also put the root of trust on its own core.
 
-Isolation and encryption keep the hypervisor out. They don't tell the tenant anything, though. A tenant who uploads a disk key to a cloud VM needs proof that the VM is a confidential VM on genuine hardware, running the expected code, before sending the key. That proof is attestation, and the rest of this post is about it. The lab builds the attestation half. Isolation and encryption get a short section at the end.
+Isolation and encryption keep the hypervisor out. A tenant who uploads a disk key to a cloud VM needs proof that the VM is a confidential VM on genuine hardware, running the expected code, before sending the key. That proof is attestation, and the rest of this post is about it. The lab builds the attestation half. Isolation and encryption get a short section at the end.
+
+For an in-depth tutorial on CC you can refer to the following material - https://cc-book.github.io/cc-book/
 
 ---
 
@@ -53,7 +55,7 @@ Attestation needs a signing key with two properties:
 
 The Trusted Computing Group's **DICE** (Device Identifier Composition Engine) design gets both properties from three steps:
 
-1. **UDS.** At manufacturing, the chip receives a random *Unique Device Secret* in its fuses. Nothing outside the chip ever learns it. (In the lab, a script plays the fab and writes it.)
+1. **UDS.** At manufacturing, the chip receives a random *Unique Device Secret* in its fuses. Nothing outside the chip ever learns it. (In our accompanying lab, a script plays the fab and writes it.)
 2. **CDI.** At every boot, the ROM measures the firmware and combines that measurement with the UDS: `CDI = HMAC(UDS, measurement)`. The result is the *Compound Device Identifier*.
 3. **Keys from the CDI.** The ROM turns the CDI into a signing key pair, the *Alias* key, and hands it to the firmware.
 
@@ -123,6 +125,8 @@ The TPM world uses the same structure under different names: an *Endorsement Key
 ---
 
 ## 5. The attestation protocol
+
+Following is a high level overview of the attestation protocol.
 
 ```mermaid
 sequenceDiagram
@@ -230,7 +234,7 @@ podman build -t cc-attest-lab .
 alias lab='podman run --rm -it -v "$PWD":/lab:Z -w /lab cc-attest-lab'
 ```
 
-Natively, add the Python `cryptography` package to the first lab's tool list.
+The primary change from the first lab is the additon of the Python `cryptography` package to the lab's tool list.
 
 Your keys and nonces will differ from the ones below: your chip gets its own random UDS, and the verifier picks a new nonce on every run. Delete `build/` to make a new chip.
 
@@ -398,7 +402,7 @@ So a verifier needs two things: the certificate, and a fresh signature from the 
 
 ## 7. What this lab leaves out
 
-The lab covers the attestation chain. Real confidential computing adds the parts the lab skips:
+The lab covers the attestation chain only. Real confidential computing includes additional capabilities which the lab skips:
 
 - **Isolation and memory encryption.** The lab's firmware keeps its Alias private key in ordinary RAM. A real host could read it there, sign anything, and break the whole scheme. The RMP, GPT and memory encryption from §2 prevent that. A RISC-V version of isolation uses PMP (Physical Memory Protection) registers, which LiteX's `secure` VexRiscv variant supports. That's a good topic for a follow-on lab.
 - **Real certificate formats.** The lab uses a 128-byte custom certificate. Real chips use X.509 certificates and token formats such as EAT, and chain the DeviceID key up to a manufacturer CA, which verifiers fetch from a service like AMD's Key Distribution Service.
@@ -418,6 +422,3 @@ The lab covers the attestation chain. Real confidential computing adds the parts
 4. **Bind a session key.** Real reports often carry the hash of a TLS public key, so the verifier knows its TLS connection ends inside the attested firmware. Replace the X25519 key in the report with a hash of a key the firmware would use for TLS.
 5. **Move the Alias key out of reach.** Switch the CPU to the `secure` VexRiscv variant and use PMP to stop user-mode code from reading the handoff area. This is the first step from attestation toward confidential computing.
 
----
-
-*Built on [LiteX](https://github.com/enjoy-digital/litex) 2026.08, the VexRiscv CPU, Verilator, and [Monocypher](https://monocypher.org) 4.0.2.*
