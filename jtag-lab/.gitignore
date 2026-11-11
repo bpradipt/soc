@@ -1,0 +1,6 @@
+build/
+sw/*.o
+sw/*.d
+sw/*.elf
+sw/*.bin
+__pycache__/
