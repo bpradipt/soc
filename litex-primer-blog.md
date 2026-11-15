@@ -1,12 +1,15 @@
 # A LiteX Primer for the SoC and Confidential Computing Series
 
-*Audience: you're reading or about to read the series that starts with [Where Trust Begins](soc-root-of-trust-blog.md). Every lab in it builds a small SoC with [LiteX](https://github.com/enjoy-digital/litex) and runs it in a simulator. This primer collects in one place the LiteX concepts the labs use: Migen modules, CSRs, the platform, `SoCCore`, the `Builder`, the simulator, and how custom firmware gets built and loaded. It also explains how the labs relate to the usual LiteX workflows, litex-boards and the command-line tools, which LiteX's own documentation leads with.*
+This primer is for readers of my upcoming SoC and Confidential Computing series. Each lab in the series builds a small SoC using [LiteX](https://github.com/enjoy-digital/litex)  and runs it in simulation. Here, you’ll find concise explanations of the LiteX concepts used throughout the labs, such as Migen modules, CSRs, the platform, SoCCore, Builder, and the simulator, as well as how to build and load custom firmware. The primer also clarifies how the labs’ workflow relates to standard LiteX practices like litex-boards and the official command-line tools.
 
 ---
 
-## 1. What is LiteX?
+## What is LiteX?
 
-LiteX is a Python framework for building SoCs. You describe the hardware in Python, LiteX generates Verilog, and a backend turns that Verilog into an FPGA bitstream or a simulator. It has several layers:
+LiteX is a Python framework for designing system-on-chips (SoCs). You describe the hardware in Python, and LiteX generates Verilog code from Python. You can use the generated Verilog code to build an FPGA bitstream or run a simulation. 
+
+LiteX consists of the following main layers:
+
 
 | Layer | What it gives you | Used in the series as |
 |---|---|---|
@@ -16,11 +19,11 @@ LiteX is a Python framework for building SoCs. You describe the hardware in Pyth
 | **Build backends** | Verilator for simulation; Vivado, Yosys/nextpnr and others for FPGAs | Verilator only |
 | **Software** | a BIOS, `libbase` (drivers), picolibc, CPU start-up code, linker scripts, generated headers | the boot ROM and firmware build |
 
-Around that core sit the ecosystem projects: LiteDRAM, LiteEth, LiteSPI, LiteSDCard and more ([Cores-Ecosystem](https://github.com/enjoy-digital/litex/wiki/Cores-Ecosystem)). [litex-boards](https://github.com/litex-hub/litex-boards) adds platform and target files for hundreds of FPGA boards.
+Then there are ecosystem projects like: LiteDRAM, LiteEth, LiteSPI, LiteSDCard and more ([Cores-Ecosystem](https://github.com/enjoy-digital/litex/wiki/Cores-Ecosystem)). [litex-boards](https://github.com/litex-hub/litex-boards) adds platform and target files for hundreds of FPGA boards.
 
 ---
 
-## 2. Three ways to use LiteX
+## Three ways to use LiteX
 
 | Way | Example | Good for |
 |---|---|---|
@@ -28,13 +31,14 @@ Around that core sit the ecosystem projects: LiteDRAM, LiteEth, LiteSPI, LiteSDC
 | **A litex-boards target** | `python3 -m litex_boards.targets.digilent_arty --build --load` | running a standard SoC on a real FPGA board |
 | **Your own SoC script** | `rot_soc.py`, `cc_soc.py`, `trustee_soc.py`, `tls_soc.py` | custom hardware, custom boot flow |
 
-The LiteX documentation primarily focuses on the first two ways. The series uses the third, for three reasons:
+The LiteX documentation primarily focuses on the first two ways. The series uses the third, for the following reasons:
 
-- It adds a **custom peripheral**, the Root of Trust block, which no CLI flag provides.
-- It replaces the **LiteX BIOS** with its own boot ROM, because the ROM is the subject of the series.
-- It drives the simulator from Python, to play the fab, the vendor, the attacker and the host around the chip.
+* It adds a custom peripheral, the Root of Trust block, which no CLI flag provides.
+* It replaces the LiteX BIOS with its own boot ROM, because the ROM is the subject of the series.
+* It drives the simulator from Python to play the fab, the vendor, the attacker and the host around the chip.
 
-The three ways share one structure. `litex_sim` is a Python script (`litex/tools/litex_sim.py`) that builds a `SimSoC` class with `SoCCore` and runs `Builder`. A litex-boards target, such as `litex_boards/targets/digilent_arty.py`, follows the same pattern with a real board's platform. The lab scripts are smaller versions of that pattern, so reading `litex_sim.py` after the labs is a good way to see what else LiteX can do.
+The core pattern is the same. The `litex_sim` is a python script (`litex/tools/litex_sim.py`) that builds a SimSoC class with SoCCore and runs Builder. A litex-boards target, such as `litex_boards/targets/digilent_arty.py`, follows the same pattern with a real board’s platform.
+The lab scripts are smaller versions of that pattern, so reading litex_sim.py after the labs is a good way to see what else LiteX can do.
 
 A quick look at the stock simulator, before you build your own:
 
@@ -45,7 +49,7 @@ litex_sim --cpu-type=vexriscv --help    # every option: Ethernet, SDRAM, tracing
 
 ---
 
-## 3. What is Migen?
+## What is Migen?
 
 Hardware is a set of signals and the rules that drive them. Migen expresses both in Python:
 
@@ -61,7 +65,7 @@ class Blinky(LiteXModule):
         self.comb += self.led.eq(counter[23])         # logic: holds at all times
 ```
 
-The pieces the series uses:
+The pieces we will be using in the series:
 
 - **`Signal(n)`**: an n-bit wire or register.
 - **`self.comb += …`**: combinational logic. The assignment holds continuously, like a wire.
@@ -71,15 +75,15 @@ The pieces the series uses:
 - **`Cat(a, b, …)`**: concatenation, first argument in the lowest bits.
 - **`Memory(width, depth, init=…)`**: a RAM or ROM array. `get_port()` gives a read or write port, and LiteX writes the `init` contents to an `.init` file.
 
-**`LiteXModule` versus Migen's `Module`.** Both describe a block of hardware. `LiteXModule` adds automatic registration: assigning a module to an attribute (`self.rot = RootOfTrust(…)`) adds it as a submodule. It also collects the block's CSRs (`AutoCSR`) and documentation (`AutoDoc`). With plain Migen you'd write `self.submodules.rot = …`. New LiteX code uses `LiteXModule`.
+Note that both **LiteX `LiteXModule` and Migen's `Module`** describe a block of hardware. `LiteXModule` adds automatic registration. Assigning a module to an attribute (`self.rot = RootOfTrust(…)`) adds it as a submodule. It also collects the block's CSRs (`AutoCSR`) and documentation (`AutoDoc`). With plain Migen you'd write `self.submodules.rot = …`. New LiteX code uses `LiteXModule`.
 
 For details, refer to the Migen [manual](https://m-labs.hk/migen/manual/).
 
 ---
 
-## 4. CSRs: how software talks to the hardware
+## CSRs: bridging software and hardware
 
-A **CSR** (Control and Status Register) is a register that the CPU reads or writes at a fixed address. LiteX gives you three kinds:
+A Control and Status Register (CSR) is a hardware register at a fixed address that lets the CPU read or write its value. LiteX provides three types of CSRs:
 
 | Class | Hardware side | CPU side | In the series |
 |---|---|---|---|
@@ -100,7 +104,7 @@ class RootOfTrust(LiteXModule):
         self.comb += self.locked.status.eq(locked)
 ```
 
-Four things are taken care by LiteX:
+LiteX takes care of the following things:
 
 1. **Collection.** `LiteXModule` finds every CSR attribute in the block.
 2. **Addressing.** The SoC gives each block a 2 KiB slot (`csr_paging = 0x800`) in the CSR region, and each register its offset inside the slot. Registers wider than 32 bits take several words, most significant word first (`csr_ordering = "big"`).
@@ -113,15 +117,16 @@ static inline void rot_lock_write(uint32_t v) { csr_write_simple(v, CSR_BASE + 0
 static inline uint32_t rot_locked_read(void) { return csr_read_simple(CSR_BASE + 0x86cL); }
 ```
 
-The names follow `<block>_<register>`, from the attribute names in Python. For registers wider than 64 bits, LiteX generates only the address, and the firmware reads word by word with `csr_read_simple(addr + 4 * i)`. The [CSR Bus](https://github.com/enjoy-digital/litex/wiki/CSR-Bus) page has the details.
+The names follow `<block>_<register>`, from the attribute names in Python. For registers wider than 64 bits, LiteX generates only the address, and the firmware reads word by word with `csr_read_simple(addr + 4 * i)`. Read the [CSR Bus](https://github.com/enjoy-digital/litex/wiki/CSR-Bus) for details.
 
 ---
 
-## 5. Platform and `SoCCore`
+## Platform and `SoCCore`
 
-### 5a. The platform: what the chip connects to
+### 5a. The platform: connecting the chip to its environment
 
-A **platform** describes the outside world: pins, clocks and connectors. For an FPGA board it lists real pins. For the simulator it lists signals that the simulator's modules drive:
+A **platform** specifies how the chip connects to the outside world, including pins, clocks, and connectors. On an FPGA board, the platform lists the physical pins used. In a simulation, it lists the signals that the simulator modules use or control.
+Here is an example (simulator) platform showing clocks and serial port.
 
 ```python
 from litex.build.generic_platform import Pins, Subsignal
@@ -138,13 +143,6 @@ _io = [
 ]
 platform = SimPlatform("SIM", _io)
 ```
-
-`platform.request("sys_clk")` hands one of these resources to the design.
-
-Every `self.sync` assignment belongs to a **clock domain**, a clock plus its reset. Plain `self.sync` uses the domain named `sys`, whose two signals, `cd_sys.clk` and `cd_sys.rst`, decide when each flip-flop updates and when it returns to its reset value. A **CRG** (clock and reset generator) drives those signals:
-
-- **On an FPGA board**, the CRG turns the board's oscillator into the frequencies the SoC wants, with the FPGA's PLL, and holds the domains in reset until the PLL locks. That's why each litex-boards target has its own `_CRG` class.
-- **In the simulator**, the `clocker` module already toggles the `sys_clk` pad at the configured frequency. The simple `CRG` from `litex.build.io` wires that pad straight to `cd_sys.clk` and adds a power-on reset: `sys` starts in reset and comes out after the first clock edge (§7e).
     
 ### 5b. `SoCCore`: the standard SoC
 
@@ -166,21 +164,21 @@ soc.crg = CRG(platform.request("sys_clk"))
 soc.rot = RootOfTrust()                          # a custom peripheral: assign it as an attribute
 ```
 
-This gives you the CPU, a Wishbone interconnect, the three memories, a UART, a timer, a control block (`ctrl`) and the CSR bridge. The CPU defines the memory map. For VexRiscv it's ROM at `0x0000_0000`, SRAM at `0x1000_0000`, main RAM at `0x4000_0000` and CSRs at `0xF000_0000`, and the build writes it to `mem.h`.
 
-Other calls used in the series:
+This setup provides a CPU, a Wishbone interconnect, three types of memory (ROM, SRAM, and main RAM), a UART, a timer, a control block (ctrl), and the CSR bridge. The CPU determines the memory map. For VexRiscv, the default layout assigns ROM to 0x0000_0000, SRAM to 0x1000_0000, main RAM to 0x4000_0000, and CSRs to 0xF000_0000. These addresses are documented in mem.h during the build process.
 
-- **`soc.add_uart(name, uart_name, uart_pads)`** adds another UART. (The simulator's bridges only handle pads named `serial`, though, so the labs stayed with one UART.)
-- **`platform.add_debug(soc)`** adds three simulation helpers as CSRs: `sim_finish` (the firmware stops the simulation), `sim_trace` (turns waveform recording on and off) and `sim_marker`.
-- **The timer** comes with `SoCCore`. The labs don't use it, but `libbase` needs `timer0` for `busy_wait()`, so `with_timer=False` breaks the software build.
+Additional calls used in the series:
 
-The [SoC Simulator](https://github.com/enjoy-digital/litex/wiki/SoC-Simulator) and [CPUs](https://github.com/enjoy-digital/litex/wiki/CPUs) wiki pages list the alternatives: other CPUs, SDRAM models, Ethernet, video.
+* **soc.add_uart(name, uart_name, uart_pads)** adds another UART to the SoC. However, the simulator’s bridges only recognise pads named `serial`, so the labs use just one UART.
+* **platform.add_debug(soc)** introduces three simulation helpers as CSRs: `sim_finish` (lets firmware stop the simulation), `sim_trace` (controls waveform recording), and `sim_marker`.
+
+For more options such as alternative CPUs, SDRAM models, Ethernet, or video, the [SoC Simulator](https://github.com/enjoy-digital/litex/wiki/SoC-Simulator) and [CPUs](https://github.com/enjoy-digital/litex/wiki/CPUs) wiki pages list the alternatives
 
 ---
 
-## 6. `Builder`: from Python to a running chip
+## `Builder`: from Python to hardware
 
-`Builder` turns the SoC into files and, for the simulator, a running process:
+`Builder` takes your SoC description written in Python and generates all the files needed for synthesis or simulation. For simulation, it produces a process that can directly run and emulate the SoC:
 
 ```python
 from litex.build.sim.config import SimConfig
@@ -207,43 +205,24 @@ build/
     └── bios/                    the LiteX BIOS, if the ROM is empty
 ```
 
-`build()` takes switches the labs rely on:
-
-| Argument | Effect |
-|---|---|
-| `Builder(..., compile_gateware=False)` | only generate headers and build the software libraries; no Verilog compile |
-| `build(run=False)` | generate everything but don't start the simulator (see the gotcha in §9) |
-| `build(trace=True)` | build the simulator with waveform support (VCD, or FST with `trace_fst=True`) |
-| `build(interactive=False)` | don't put your terminal in raw mode |
-
-**The two-pass build.** Firmware needs `csr.h` and `mem.h`, and those come from the SoC. The ROM's contents are part of the SoC too. So each lab builds twice:
-
-1. Build the SoC with empty memories and `compile_gateware=False`. This produces the headers and libraries.
-2. Compile the boot ROM and firmware against them.
-3. Build the SoC again with the compiled images as `integrated_rom_init` and `integrated_main_ram_init`, then run it.
-
-The second pass doesn't change the hardware, so the addresses from pass 1 stay valid.
-
-**The BIOS.** When the ROM is empty, `Builder` compiles the LiteX BIOS and puts it there. The BIOS is a small monitor that can boot software from the serial port, flash, SD card or Ethernet. The labs replace it with their own boot ROM. In pass 1, setting `soc.integrated_rom_initialized = True` tells `Builder` not to build the BIOS.
-
 ---
 
-## 7. What a run prints, from `INFO:SoC` to the reset vector
+## What to expect from a run: INFO:SoC to the reset vector
 
-A lab run prints three kinds of lines before the boot ROM says anything. They come from three different programs, at three different times.
+Before the boot ROM starts, a lab run prints three kinds of output lines. Each set comes from a different program and corresponds to a different stage in the process. Knowing this will help you understand what is happening as you play with the lab.
 
 | Stage | Printed by | Example | What happens |
 |---|---|---|---|
-| 1. Elaborate | Python (`SoCCore`, `Builder`) | `INFO:SoC:CPU vexriscv setting reset address to 0x00000000.` | LiteX assembles the SoC and writes `sim.v`, the `.init` files and the headers |
-| 2. Compile | `make`, Verilator, the C compiler | `verilator -Wno-fatal -O3 --cc …` (or `[build] RTL unchanged…`) | `sim.v` becomes `obj_dir/Vsim`; each simulation module becomes a `.so` |
-| 3. Start the simulator | `Vsim` and its modules | `[gmii_ethernet] loaded`, `[clocker] sys_clk: freq_hz=1000000` | modules load, `sim_config.js` picks the ones to attach |
-| 4. Power on | the simulated chip | `[rom] reset vector reached` | memories fill from `.init` files, reset releases, the CPU fetches from `0x0` |
+| 1. Assembly | Python (`SoCCore`, `Builder`) | `INFO:SoC:CPU vexriscv setting reset address to 0x00000000.` | LiteX assembles the SoC and writes `sim.v`, the `.init` files and the headers |
+| 2. Compile | `make`, Verilator, C compiler | `verilator -Wno-fatal -O3 --cc …` (or `[build] RTL unchanged…`) | `sim.v` becomes `obj_dir/Vsim`; each simulation module becomes a `.so` |
+| 3. Starting of the simulator | `Vsim` and its modules | `[gmii_ethernet] loaded`, `[clocker] sys_clk: freq_hz=1000000` | modules load, `sim_config.js` picks the ones to attach |
+| 4. Power on  | simulated SoC | `[rom] reset vector reached` | memories fill from `.init` files, reset releases, the CPU fetches from `0x0` |
 
-### 7a. `INFO:SoC`: Python builds the SoC
+### `INFO:SoC`: Building the SoC using Python
 
-The `INFO:SoC…` lines are a transcript of `SoCCore` assembling the chip. Reading them is the quickest way to check what you built:
+The `INFO:SoC…` lines show a step-by-step log of `SoCCore` assembling your chip. Reviewing these messages is the quickest way to confirm your SoC’s configuration and verify that all components are included as intended:
 
-```
+```bash
 INFO:SoCCSRHandler:32-bit CSR Bus, 32-bit Aligned, 16.0KiB Address Space, 2048B Paging, big Ordering (Up to 32 Locations).
 INFO:SoC:CPU vexriscv overriding sram mapping from 0x01000000 to 0x10000000.
 INFO:SoC:CPU vexriscv setting reset address to 0x00000000.
@@ -253,9 +232,7 @@ INFO:SoCCSRHandler:rot CSR allocated at Location 1.
 INFO:SoCCSRHandler:uart CSR allocated at Location 6.
 ```
 
-Each line matches a concept from earlier in this primer. The CSR handler sets the 2 KiB slots and the word order from §4. VexRiscv moves SRAM to its own address and sets its reset address to the ROM, as §5b says. `rot CSR allocated at Location 1` means the Root of Trust gets slot 1, so its registers start at `0xF000_0000 + 1 × 0x800 = 0xF000_0800`. The run prints these lines twice, once for each pass of the two-pass build.
-
-### 7b. Compiling: one simulator, many modules
+### Compiling: one simulator with many modules
 
 `Vsim` has two parts:
 
@@ -264,7 +241,7 @@ Each line matches a concept from earlier in this primer. The CSR handler sets th
 
 The modules are the outside world: a clock source, a console, Ethernet, an I2C EEPROM, a JTAG port, a QEMU bridge. Each is a directory in `litex/build/sim/core/modules/`, and the build compiles *all* of them into `build/gateware/modules/*.so`, whether your SoC uses them or not.
 
-### 7c. `[module] loaded`: the simulator starts
+### `[module] loaded`: the simulator starts
 
 When `Vsim` starts, it opens every `.so` in `modules/` with `dlopen`, and each module prints that it loaded:
 
@@ -278,7 +255,8 @@ When `Vsim` starts, it opens every `.so` in `modules/` with `dlopen`, and each m
 [clocker] sys_clk: freq_hz=1000000, phase_deg=0
 ```
 
-So `[gmii_ethernet] loaded` means the code is in memory, not that the chip has an Ethernet port. Next, `Vsim` reads `sim_config.js`, which `SimConfig` wrote from your script, and creates a session only for the modules listed there. In the labs that's two:
+So `[gmii_ethernet] loaded` means the code is in memory, not that the chip has an Ethernet port. Next, `Vsim` reads `sim_config.js`, which `SimConfig` wrote from your script, and creates a session only for the modules listed there. 
+For the lab we use two modules as shown below:
 
 ```json
 {
@@ -307,7 +285,7 @@ So `[gmii_ethernet] loaded` means the code is in memory, not that the chip has a
 
 Each `interface` name pads from the platform's `_io` list. `clocker` drives `sys_clk`. `serial2console` connects the UART's `serial` pads to the simulator's stdin and stdout, which is how `printf` in the firmware reaches your terminal, and how the host talks to the chip. The `[clocker] sys_clk: …` line comes from creating the clocker's session.
 
-### 7d. The run loop
+### The run loop
 
 The simulator advances time in steps of `timebase`, 500,000 ps here, which is half a period of the 1 MHz clock:
 
@@ -321,20 +299,18 @@ flowchart LR
 
 `eval()` is the Verilated chip. On a rising clock edge, every `self.sync` assignment in every block takes effect, and every `self.comb` assignment settles. The loop stops when the firmware writes `sim_finish`. That write prints the closing `[sim] sys_clk=1.000MHz, simulated=…, elapsed=…` line, which shows how fast the simulation ran compared with real time.
 
-### 7e. Power-on: from reset to `[rom] reset vector reached`
+### Power-on: from reset to `[rom] reset vector reached`
 
-Nothing loads software into the chip at run time. The memories are full before the first clock edge:
+This is the flow:
 
 1. **Memory contents.** `sim.v` declares each memory with an `initial` block that calls `$readmemh("sim_rom.init", rom)`, and the same for `sim_main_ram.init`, `sim_sram.init` and `sim_otp.init`. Verilator runs those blocks when the model starts, so the boot ROM, the firmware and the fuses are in place at time zero.
 2. **Reset.** The CRG holds the `sys` clock domain in reset at power-on and releases it after the first clock edge.
-3. **The first fetch.** VexRiscv leaves reset at its reset address, `0x0000_0000` (the `setting reset address` line from §7a). That address belongs to the ROM, so the first instruction it runs is the boot ROM's `crt0`, which sets up the stack and calls `main()`.
+3. **The first fetch.** VexRiscv leaves reset at its reset address, `0x0000_0000`. That address belongs to the ROM, so the first instruction it runs is the boot ROM's `crt0`, which sets up the stack and calls `main()`.
 4. **The first output.** `main()` calls `uart_init()` and `printf()`. Each byte goes through the UART's registers to its pads, `serial2console` picks it up on the next tick, and `[rom] reset vector reached` appears on your terminal.
 
 ---
 
-## 8. Your own firmware
-
-### 8a. The build
+## Build your own firmware
 
 LiteX's generated `variables.mak` and its `common.mak` give your firmware's Makefile the compiler, flags, include paths and library list for the SoC you built:
 
@@ -363,7 +339,7 @@ firmware.elf: crt0.o firmware.o
 
 The two linker scripts come with LiteX. The BIOS one suits code that runs from ROM. The demo one suits an application in main RAM. `crt0.S` sets up the stack, copies initialized data, clears `.bss` and calls `main()`.
 
-### 8b. The code
+Following is the code snippet:
 
 ```c
 #include <generated/csr.h>     /* register addresses and accessors */
@@ -381,9 +357,11 @@ int main(void)
 }
 ```
 
-LiteX's C library is small so you'll have to write some custom helpers as per your requirements. `system.h` adds `flush_cpu_icache()`, which a boot ROM must call before it jumps to code it has loaded or measured.
+LiteX's C library is small so you'll have to write some custom helpers as per your requirements. `system.h` adds `flush_cpu_icache()`, which a boot ROM must call before it jumps to code that it has loaded or measured.
 
-### 8c. Getting firmware into the chip
+### Getting firmware into the chip
+
+The following are the different mechanisms:
 
 | Way | How | Used by |
 |---|---|---|
@@ -396,7 +374,7 @@ For a starting point, `litex_bare_metal_demo --build-path=build/<target>` create
 
 ---
 
-## 9. Gotchas the series ran into
+## 9. Some gotchas I ran into
 
 | Symptom | Cause | Fix used in the labs |
 |---|---|---|
@@ -412,18 +390,7 @@ For a starting point, `litex_bare_metal_demo --build-path=build/<target>` create
 
 ---
 
-## 10. Where this primer fits in the series
-
-| Post | LiteX features it adds |
-|---|---|
-| [1. Where Trust Begins](soc-root-of-trust-blog.md) | `SoCCore` with a custom CSR block, custom boot ROM, two-pass build, `Memory` for fuses, `sim_trace` |
-| [2. Proving What Runs](cc-attestation-blog.md) | bigger ROM, firmware linked against vendored C libraries, simulator driven through pipes |
-| [3. Teaching Trustee a New TEE](trustee-attestation-blog.md) | firmware with two crypto libraries, larger memories, a host process next to the simulator |
-| [4. Taking the Host Out of the Protocol](tls-attestation-blog.md) | a TLS client in firmware, flow control over the simulated UART |
-
----
-
-## 11. References
+## 10. References
 
 **LiteX**
 - [LiteX repository](https://github.com/enjoy-digital/litex) and [wiki home](https://github.com/enjoy-digital/litex/wiki/Home)
@@ -442,7 +409,7 @@ For a starting point, `litex_bare_metal_demo --build-path=build/<target>` create
 - [litex-boards](https://github.com/litex-hub/litex-boards): platform and target files for real FPGA boards
 - [fpga_101](https://github.com/litex-hub/fpga_101): hands-on FPGA lessons with Migen and LiteX
 
-**Underneath**
+**Additional**
 - [Migen manual](https://m-labs.hk/migen/manual/) and the wiki's [Migen-Amaranth](https://github.com/enjoy-digital/litex/wiki/Migen-Amaranth) page
 - [VexRiscv](https://github.com/SpinalHDL/VexRiscv): the CPU core used in the labs
 - [Verilator](https://www.veripool.org/verilator/): the simulator backend
