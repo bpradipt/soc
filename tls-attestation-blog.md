@@ -1,10 +1,10 @@
 # Taking the Host Out of the Protocol: A Bare-Metal TEE Talks TLS to Trustee
 
-*Audience: you've read [Teaching Trustee a New TEE](trustee-attestation-blog.md). In that post's lab, the untrusted host ran the KBS client: it spoke plain HTTP to Trustee and passed messages to the chip over the UART. This short post moves the KBS client into the chip's firmware. The firmware speaks HTTPS to Trustee, over TLS that ends inside the chip, and the host shrinks to a byte pipe. No VM and no Linux are involved: it's bare-metal confidential computing.*
+You've read [Teaching Trustee a New TEE](trustee-attestation-blog.md). In that post's lab, the untrusted host ran the KBS client: it spoke plain HTTP to Trustee and passed messages to the chip over the UART. This short post moves the KBS client into the chip's firmware. The firmware speaks HTTPS to Trustee, over TLS that ends inside the chip, and the host shrinks to a byte pipe. No VM and no Linux are involved: it's bare-metal confidential computing.
 
 ---
 
-## 1. The gap: who sent the secret?
+## The gap: who sent the secret?
 
 The two labs give the KBS client to different parties.
 
@@ -28,7 +28,7 @@ flowchart TB
 
 The `trustee-lab` design held up against forged evidence, replays and key swaps, because the evidence binds the KBS nonce and the chip's TEE key, and the secret arrives encrypted to that key.
 
-It doesn't hold up against one attack. The chip never checks *who* encrypted the secret, and anyone can encrypt to a public key. A hostile host can skip Trustee, play KBS itself, and hand the chip a key of its own choosing:
+It doesn't hold up against one attack. The chip never checks *who* verified the evidence or who encrypted the secret. A hostile host can impersonate Trustee, treat a malicious firmware as genuine and hand the chip a key of its own choosing:
 
 ```bash
 cd trustee-lab
@@ -41,13 +41,13 @@ lab ./trustee_soc.py --impersonate
 [fw] decrypted the secret from Trustee: "attacker's disk key: all yours!!"
 ```
 
-If the workload then encrypts a disk with that key, the attacker can read the disk later. Confidential computing protects against a hostile host, so this hole matters.
+If the workload then encrypts some remote data with that key, the attacker can read that data. 
 
-The real Attestation Agent avoids it because it talks to KBS over TLS from inside the TEE, and trusts the KBS certificate through configuration the TEE measures. In Confidential Containers, the KBS address and certificate travel in *init-data*, whose hash goes into the attestation evidence. The host carries TLS bytes it can neither read nor forge.
+The real Attestation Agent avoids it because it talks to KBS over TLS from inside the TEE, and trusts the KBS certificate.
 
 ---
 
-## 2. The fix: TLS that ends in the chip
+## The fix: TLS that ends in the chip
 
 The lab in [`tls-lab/`](tls-lab/) moves the whole client into the firmware. The host keeps one job, carrying bytes:
 
@@ -82,7 +82,7 @@ Over that session, the firmware sends the same three requests as the third post'
 
 ---
 
-## 3. Three things a 1 MHz TEE taught us
+## Three things a 1 MHz TEE taught us
 
 **Timeouts.** KBS's web server, actix-web, gives a client 3 seconds to finish the TLS handshake and 5 seconds between requests. The simulated chip needs about a minute for the handshake: it verifies the server's ECDSA signature and does an ECDH, each worth millions of cycles. The lab adds one patch, `kbs-slow-client.patch`, that raises those limits to ten minutes. It's marked lab-only. A real embedded TEE with crypto hardware finishes in milliseconds.
 
@@ -94,7 +94,7 @@ The firmware grows to 83 KB with the TLS stack, so the firmware partition grows 
 
 ---
 
-## 4. Hands-on
+## Hands-on
 
 Setup matches the third post. `trustee/setup.sh` applies one extra patch, the timeout change:
 
@@ -154,15 +154,15 @@ lab ./tls_soc.py --impersonate
 [fw] TLS failed, BearSSL error 27: the server's handshake signature doesn't match the pinned Trustee key
 ```
 
-The same attack that worked in §1 now fails during the TLS handshake. The fake server holds a valid key pair and certificate, but not the pinned key. The chip aborts before it sends any evidence or receives any secret.
+The same attack that worked previously now fails during the TLS handshake. The fake server holds a valid key pair and certificate, but not the pinned key. The chip aborts before it sends any evidence or receives any secret.
 
 ---
 
-## 5. What's still missing
+## What's still missing
 
 - **Isolation.** The host still runs the simulator and could read the chip's RAM, Alias key included. A real TEE stops that with the access checks and memory encryption from the second post. This lab shows the *client* side of confidential computing, not the memory protection.
 - **TLS 1.3 and certificate chains.** BearSSL speaks TLS 1.2 only. Pinning one key also means that rotating the KBS key needs new firmware and a new reference value. A CA certificate in the measured configuration would allow rotation.
-- **A hardware RNG**, as §3 explains.
+- **A hardware RNG**.
 
 With these changes, 83 KB of bare-metal firmware does the Attestation Agent's job from a confidential VM: it attests, authenticates Trustee, and receives secrets that no one on the path can read or replace.
 
