@@ -1,12 +1,32 @@
 # Taking the Host Out of the Protocol: A Bare-Metal TEE Talks TLS to Trustee
 
-*Audience: you've read [Teaching Trustee a New TEE](trustee-attestation-blog.md), where the DICE lab chip attested to a Trustee KBS through an untrusted host. This short post closes the gap that design leaves open. The chip runs the whole Trustee client in its firmware, over TLS that ends inside the chip, and the host shrinks to a byte pipe. No VM and no Linux are involved: it's bare-metal confidential computing.*
+*Audience: you've read [Teaching Trustee a New TEE](trustee-attestation-blog.md). In that post's lab, the untrusted host ran the KBS client: it spoke plain HTTP to Trustee and passed messages to the chip over the UART. This short post moves the KBS client into the chip's firmware. The firmware speaks HTTPS to Trustee, over TLS that ends inside the chip, and the host shrinks to a byte pipe. No VM and no Linux are involved: it's bare-metal confidential computing.*
 
 ---
 
 ## 1. The gap: who sent the secret?
 
-In the third post, the host relayed every message between Trustee and the chip. That held up against forged evidence, replays and key swaps, because the evidence binds the KBS nonce and the chip's TEE key, and the secret arrives encrypted to that key.
+The two labs give the KBS client to different parties.
+
+In the third post's lab, [`trustee-lab/`](trustee-lab/), the host is the mediator, and it runs the KBS client. `kbs_host.py` sends the `/auth`, `/attest` and `/resource` requests to Trustee over plain HTTP. It talks to the chip over the UART with a line protocol: it sends the KBS nonce, receives the TEE public key and the evidence, and sends back the JWE that holds the secret. The host reads every message. The firmware does only the steps that need a key: it creates the TEE key, signs the evidence, and decrypts the JWE.
+
+In this post's lab, [`tls-lab/`](tls-lab/), the firmware runs the KBS client itself and speaks HTTPS to Trustee. The host still opens the TCP connection, but it carries only TLS records that it can't read or change.
+
+```mermaid
+flowchart TB
+    subgraph old ["trustee-lab: the host runs the KBS client"]
+        direction LR
+        fw1["Firmware<br/>TEE key, evidence,<br/>JWE decryption"] <-->|"UART: NONCE, TEEPUBKEY,<br/>EVIDENCE, JWE"| h1["Host, kbs_host.py<br/>KBS client"]
+        h1 <-->|"plain HTTP"| k1["Trustee KBS"]
+    end
+    subgraph new ["tls-lab: the firmware runs the KBS client"]
+        direction LR
+        fw2["Firmware<br/>KBS client, TLS, TEE key,<br/>evidence, JWE decryption"] <-->|"UART: TLS records as hex"| h2["Host, kbs_host.py<br/>byte pipe"]
+        h2 <-->|"TCP: TLS records"| k2["Trustee KBS<br/>HTTPS"]
+    end
+```
+
+The `trustee-lab` design held up against forged evidence, replays and key swaps, because the evidence binds the KBS nonce and the chip's TEE key, and the secret arrives encrypted to that key.
 
 It doesn't hold up against one attack. The chip never checks *who* encrypted the secret, and anyone can encrypt to a public key. A hostile host can skip Trustee, play KBS itself, and hand the chip a key of its own choosing:
 
@@ -31,7 +51,7 @@ The real Attestation Agent avoids it because it talks to KBS over TLS from insid
 
 The lab in [`tls-lab/`](tls-lab/) moves the whole client into the firmware. The host keeps one job, carrying bytes:
 
-| Step | Third post | This post |
+| Step | `trustee-lab` (third post) | `tls-lab` (this post) |
 |---|---|---|
 | TCP connection to Trustee | host | host |
 | TLS | none (plain HTTP) | **firmware**, with the KBS key pinned |
